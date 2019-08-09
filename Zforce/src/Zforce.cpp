@@ -16,9 +16,12 @@
     License along with this library; if not, write to the Free Software
     Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
 */
-#include "I2C/I2C.h"
+#include <Arduino.h>
+#include "Wire.h"
 #include "Zforce.h"
 #include <string.h>
+
+#define ZFORCE_I2C_ADDRESS 0x50
 
 Zforce::Zforce()
 {
@@ -28,23 +31,42 @@ void Zforce::Start(int dr)
 {
   dataReady = dr;
   pinMode(dataReady, INPUT);
-  I2c.setSpeed(1);
-  I2c.begin();
+  Wire.begin();
 }
 
 int Zforce::Read(uint8_t * payload)
 {
   int status = 0;
+  byte index = 0;
 
-  status = I2c.read(ZFORCE_I2C_ADDRESS, 2);
+  status = Wire.requestFrom(ZFORCE_I2C_ADDRESS, 2);
 
-  // Read the 2 I2C header bytes.
-  payload[0] = I2c.receive();
-  payload[1] = I2c.receive();
+  while(Wire.available())    // if two bytes were received
+  {
+    // Read the 2 I2C header bytes.
+    payload[index] = Wire.read();
+    index++;
+  }
 
-  status = I2c.read(ZFORCE_I2C_ADDRESS, payload[1], &payload[2]);
+  status = Wire.requestFrom(ZFORCE_I2C_ADDRESS, payload[1]);
 
-  return status; // return 0 if success, otherwise error code according to Atmel Data Sheet
+  while(Wire.available())    // if two bytes were received
+  {
+    // Read the 2 I2C header bytes.
+    payload[index] = Wire.read();
+    index++;
+  }
+
+#ifdef DEBUG
+  for(int i=0; i<index; i++)
+  {
+    Serial.print(payload[i], HEX);
+    Serial.print(" ");
+  }
+  Serial.println("");
+#endif
+
+  return 0; // return 0 if success, otherwise error code according to Atmel Data Sheet
 }
 
 /*
@@ -53,9 +75,12 @@ int Zforce::Read(uint8_t * payload)
 int Zforce::Write(uint8_t* payload)
 {
   int len = payload[1] + 2;
-  int status = I2c.write(ZFORCE_I2C_ADDRESS, payload[0], &payload[1], len);
 
-  return status; // return 0 if success, otherwise error code according to Atmel Data Sheet
+  Wire.beginTransmission(ZFORCE_I2C_ADDRESS); // transmit to device #4
+  Wire.write(payload, len);
+  Wire.endTransmission(); // stop transmitting
+
+  return 0; // return 0 if success, otherwise error code according to Atmel Data Sheet
 }
 
 bool Zforce::Enable(bool isEnabled)

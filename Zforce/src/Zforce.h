@@ -18,8 +18,7 @@
 */
 #pragma once
 
-#define MAX_PAYLOAD 127
-#define ZFORCE_I2C_ADDRESS 0x50
+#define MAX_PAYLOAD 63
 
 enum TouchEvent
 {
@@ -43,7 +42,6 @@ enum class MessageType
 	BOOTCOMPLETETYPE = 8
 };
 
-
 typedef struct TouchData
 {
 	uint16_t x;
@@ -56,7 +54,6 @@ typedef struct Message
 {
 	virtual ~Message()
 	{
-		
 	}
 	MessageType type;
 } Message;
@@ -69,14 +66,13 @@ typedef struct TouchMessage : public Message
 		touchData = nullptr;
 	}
 	uint8_t touchCount;
-	TouchData* touchData;
+	TouchData *touchData;
 } TouchMessage;
 
 typedef struct EnableMessage : public Message
 {
 	virtual ~EnableMessage()
 	{
-
 	}
 	bool enabled;
 } EnableMessage;
@@ -85,7 +81,6 @@ typedef struct TouchActiveAreaMessage : public Message
 {
 	virtual ~TouchActiveAreaMessage()
 	{
-		
 	}
 	uint16_t minX;
 	uint16_t minY;
@@ -97,7 +92,6 @@ typedef struct FlipXYMessage : public Message
 {
 	virtual ~FlipXYMessage()
 	{
-		
 	}
 	bool flipXY;
 } FlipXYMessage;
@@ -106,7 +100,6 @@ typedef struct ReverseXMessage : public Message
 {
 	virtual ~ReverseXMessage()
 	{
-		
 	}
 	bool reversed;
 } ReverseXMessage;
@@ -115,7 +108,6 @@ typedef struct ReverseYMessage : public Message
 {
 	virtual ~ReverseYMessage()
 	{
-		
 	}
 	bool reversed;
 } ReverseYMessage;
@@ -124,13 +116,11 @@ typedef struct ReportedTouchesMessage : public Message
 {
 	virtual ~ReportedTouchesMessage()
 	{
-		
 	}
 	uint8_t reportedTouches;
 } ReportedTouchesMessage;
 
-
-class Zforce 
+class Zforce
 {
     public:
 		Zforce();
@@ -162,4 +152,4 @@ class Zforce
 		volatile MessageType lastSentMessage;
 };
 
-extern Zforce zforce;
+// extern Zforce zforce;
