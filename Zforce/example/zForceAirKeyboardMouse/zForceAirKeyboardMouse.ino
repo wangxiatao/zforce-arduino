@@ -1,62 +1,59 @@
-#include <Arduino.h>
 #include <Keyboard.h>
 #include <Mouse.h>
-#include "Zforce.h"
-#include "Settings.h"
+#include <Zforce.h>
 
-// #define Serial SerialUSB
+#define TOUCH_BUFFER_SIZE 1 // must not exeed 4
 
-int previousButtonState = HIGH; // for checking the state of a pushButton
-Zforce touch = Zforce();
-const int DATA_READY = 5;
+typedef struct Location
+{
+    uint16_t x;
+    uint16_t y;
+} Location;
+
+typedef struct TouchPoint
+{
+    Location loc;
+    uint8_t state;
+} TouchPoint;
+
+Zforce zf = Zforce();
+uint8_t nTouches = 0;
 TouchPoint tp;
 Location previousLoc;
 Location initialLoc;
+int previousButtonState = HIGH; // for checking the state of a pushButton
+volatile bool newTouchDataFlag = false;
 
-void touchInit()
+void dataReadyISR() { newTouchDataFlag = true; }
+
+bool isDataReady() { return digitalRead(PIN_NN_DR) == HIGH; }
+
+bool touchInit()
 {
-    touch.Start(DATA_READY);
-    Serial.println("Starting touch initialization...");
-
-    Message *msg = touch.GetMessage();
-    if (msg != NULL)
+    zf.Start(PIN_NN_DR);
+    pinMode(PIN_NN_DR, INPUT_PULLDOWN);
+    if (isDataReady())
     {
-        Serial.println(F("zForce touch sensor detected"));
+        Message *msg = zf.GetMessage();
+        if (msg->type == MessageType::BOOTCOMPLETETYPE)
+            Serial.println(F("Sensor connected"));
+        else
+            Serial.println(F("Unexpected senosr message"));
+        zf.DestroyMessage(msg);
     }
-    touch.DestroyMessage(msg);
 
-    //  touch.ReverseX(true); // Send and read ReverseX
-    //  do
-    //  {
-    //    msg = touch.GetMessage();
-    //  } while (msg == NULL);
-    //
-    //  if (msg->type == MessageType::REVERSEXTYPE)
-    //  {
-    //    // Sprintln(F("zForce touch sensor reverse X axis"));
-    //  }
-    //  touch.DestroyMessage(msg);
-    //
-    //  uint8_t changeFreq[] = {0xEE, 0x0B, 0xEE, 0x09, 0x40, 0x02, 0x02, 0x00, 0x68, 0x03, 0x80, 0x01, 0x32};
-    //  touch.Write(changeFreq);
-    //  do
-    //  {
-    //    msg = touch.GetMessage();
-    //  } while (msg == NULL);
-    //  touch.DestroyMessage(msg);
-    //  // Sprintln(F("Changed frequency"));
-
-    touch.Enable(true); // Send and read Enable
-    do
-    {
-        msg = touch.GetMessage();
-    } while (msg == NULL);
-
-    if (msg->type == MessageType::ENABLETYPE)
-    {
-        Serial.println(F("zForce touch sensor is ready"));
-    }
-    touch.DestroyMessage(msg);
+    zf.Enable(true); // Send and read Enable
+    uint16_t timeout = 500;
+    while (!isDataReady() && timeout--)
+        ;
+    if(timeout == 0)
+        return false;
+    Message *msg = zf.GetMessage();
+    if (msg == NULL)
+        return false;
+    zf.DestroyMessage(msg);
+    newTouchDataFlag = false;   // clear flag
+    return true;
 }
 
 long globalMillis = 0;
@@ -66,9 +63,7 @@ const int keyboardBoundary = 1100;
 void loopMouse()
 {
     if(tp.loc.x > keyboardBoundary)
-    {
         return;
-    }
 
     if (tp.state == 0)
     {
@@ -80,16 +75,10 @@ void loopMouse()
     {
         if (tp.state == 1)
         {
-            if(previousLoc.x == tp.loc.x && previousLoc.y == tp.loc.y)
-            {
-
-            }
-            else if (tp.state == 1 && tp.loc.x <= keyboardBoundary)
+            if (tp.state == 1 && tp.loc.x <= keyboardBoundary)
             {
                 if((millis() - globalMillis) >= holdTime)
-                {
                     Mouse.move((tp.loc.x - previousLoc.x) / 1, (tp.loc.y - previousLoc.y) / 1);
-                }
                 previousLoc.x = tp.loc.x;
                 previousLoc.y = tp.loc.y;
             }
@@ -100,7 +89,6 @@ void loopMouse()
             {
                 Mouse.click(MOUSE_LEFT);
             }
-            // globalMillis = millis();
             tp.state = 0xFF;
         }
     }
@@ -109,94 +97,74 @@ void loopMouse()
 void loopKeyboard()
 {
     int buttonState = tp.state < 2; // read the pushbutton:
-    // if the button state has changed,
-    if ((buttonState != previousButtonState)
-        // and it's currently pressed:
-        && (buttonState == HIGH))
-    {
-        // type out a message
+
+    if ((buttonState != previousButtonState) && (buttonState == HIGH))
+    {   // if the button state has changed, and it's currently pressed
         if (tp.loc.x > keyboardBoundary)
         {
             if (tp.loc.y < 250)
-            {
                 Keyboard.print('A');
-            }
             else if (tp.loc.y < 500)
-            {
                 Keyboard.print('B');
-            }
             else if (tp.loc.y < 750)
-            {
                 Keyboard.print('C');
-            }
             else if (tp.loc.y < 1000)
-            {
                 Keyboard.print('D');
-            }
             else
-            {
                 Keyboard.print('E');
-            }
         }
         else
         {
-            //      Keyboard.print('E');
+            // May do something to catch the rest of the cases
         }
     }
-    // save the current button state for comparison next time:
-    previousButtonState = buttonState;
+    previousButtonState = buttonState;  // save the current button state for comparison next time
 }
 
-void getTouch()
+uint8_t updateTouch()
 {
-    Message *msg = touch.GetMessage();
-    if (msg != NULL)
-    {
-        if (msg->type == MessageType::TOUCHTYPE)
-        {
-            // do something with the data touchData
-            tp.loc.x = ((TouchMessage *)msg)->touchData[0].x;
-            tp.loc.y = ((TouchMessage *)msg)->touchData[0].y;
-            tp.state = ((TouchMessage *)msg)->touchData[0].event;
+    if (newTouchDataFlag == false)
+        return 0;
 
-#ifdef DEBUG
-            Serial.print(((TouchMessage *)msg)->touchData[0].x);
-            Serial.print("\t");
-            Serial.print(((TouchMessage *)msg)->touchData[0].y);
-            Serial.print("\t");
-            Serial.println(((TouchMessage *)msg)->touchData[0].event);
-#endif
+    newTouchDataFlag = false;
+    Message *touch = zf.GetMessage();
+    if (touch != NULL)
+    {
+        if (touch->type == MessageType::TOUCHTYPE)
+        {
+            auto size = ((TouchMessage *)touch)->touchCount;
+            nTouches = size >= TOUCH_BUFFER_SIZE ? TOUCH_BUFFER_SIZE : size;
+            for (uint8_t i = 0; i < nTouches; i++)
+            {
+                tp.loc.x = ((TouchMessage *)touch)->touchData[0].x;
+                tp.loc.y = ((TouchMessage *)touch)->touchData[0].y;
+                tp.state = ((TouchMessage *)touch)->touchData[0].event;
+            }
+            zf.DestroyMessage(touch);
+            return nTouches;
         }
+        zf.DestroyMessage(touch);
     }
-    touch.DestroyMessage(msg);
+    return -1;
 }
 
 void setup()
 {
-    Serial.begin(115200);
-
-#ifdef DEBUG
-    for (int i = 0; i < 100; i++)
-    {
-        Serial.print("Program starts ");
-        Serial.print(i);
-        Serial.println(" ...");
-        delay(50);
-    }
-#endif
-
     pinMode(LED_BUILTIN, OUTPUT);
     digitalWrite(LED_BUILTIN, HIGH);
-    touchInit();
-
+    
     Keyboard.begin(); // initialize control over the keyboard
     Mouse.begin();
+    if(!touchInit())
+        Serial.println(F("Touch init failed"));
+    
+    attachInterrupt(digitalPinToInterrupt(PIN_NN_DR), dataReadyISR, RISING);
 }
 
 void loop()
 {
     digitalWrite(LED_BUILTIN, LOW);
-    getTouch();
+    updateTouch();
     digitalWrite(LED_BUILTIN, HIGH);
     loopKeyboard();
     loopMouse();
