@@ -1,8 +1,13 @@
 #include <Keyboard.h>
 #include <Mouse.h>
 #include <Zforce.h>
+#include <Wire.h>
 
-#define TOUCH_BUFFER_SIZE 1 // must not exeed 4
+//#define WAIT_SERIAL_PORT_CONNECTION
+#define TOUCH_BUFFER_SIZE 1
+const int holdTime = 80;
+const int keyboardBoundary = 1100;
+long globalMillis = millis();
 
 typedef struct Location
 {
@@ -30,35 +35,62 @@ bool isDataReady() { return digitalRead(PIN_NN_DR) == HIGH; }
 
 bool touchInit()
 {
-    zf.Start(PIN_NN_DR);
+    globalMillis = millis();
     pinMode(PIN_NN_DR, INPUT_PULLDOWN);
-    if (isDataReady())
-    {
-        Message *msg = zf.GetMessage();
-        if (msg->type == MessageType::BOOTCOMPLETETYPE)
-            Serial.println(F("Sensor connected"));
-        else
-            Serial.println(F("Unexpected senosr message"));
-        zf.DestroyMessage(msg);
-    }
-
-    zf.Enable(true); // Send and read Enable
+    pinMode(PIN_NN_RST, OUTPUT);
+    digitalWrite(PIN_NN_RST, LOW);
+    delay(10);
+    digitalWrite(PIN_NN_RST, HIGH);
+    
+    Wire.begin();
+    
     uint16_t timeout = 500;
     while (!isDataReady() && timeout--)
-        ;
+        delay(1);
     if(timeout == 0)
+    {
+        Serial.println("Timeout during getting boot complete");
         return false;
-    Message *msg = zf.GetMessage();
+    }
+    Message *msg = zf.GetMessage(); // Get bootcomplete message
+    if (msg->type == MessageType::BOOTCOMPLETETYPE)
+        Serial.println(F("Sensor connected"));
+    else
+    {
+        zf.DestroyMessage(msg);
+        Serial.print(F("BootComplete failed, unexpected sensor message. "));
+        Serial.print("Expect ");
+        Serial.print((uint8_t)MessageType::BOOTCOMPLETETYPE);
+        Serial.print(", but get ");
+        Serial.println((uint8_t)msg->type);
+        return false;
+    }
+    zf.DestroyMessage(msg);
+
+    zf.Enable(true); // Send and read Enable
+    timeout = 500;
+    while (!isDataReady() && timeout--)
+        delay(1);
+    if(timeout == 0)
+    {
+        Serial.println("Timeout during enable");
+        return false;
+    }
+    msg = zf.GetMessage();
     if (msg == NULL)
+    {
+        zf.DestroyMessage(msg);
         return false;
+    }
     zf.DestroyMessage(msg);
     newTouchDataFlag = false;   // clear flag
+    attachInterrupt(digitalPinToInterrupt(PIN_NN_DR), dataReadyISR, RISING);
+
+    Serial.print(F("Initialization took "));
+    Serial.print(millis() - globalMillis);
+    Serial.println("ms");
     return true;
 }
-
-long globalMillis = 0;
-const int holdTime = 80;
-const int keyboardBoundary = 1100;
 
 void loopMouse()
 {
@@ -151,14 +183,24 @@ uint8_t updateTouch()
 void setup()
 {
     pinMode(LED_BUILTIN, OUTPUT);
+    digitalWrite(LED_BUILTIN, LOW);
+    Serial.begin(115200);
+    
+    #ifdef WAIT_SERIAL_PORT_CONNECTION
+    while (!Serial) // 10Hz blink to indicate USB connection is waiting to establish
+    {
+        digitalWrite(LED_BUILTIN, LOW);
+        delay(50);
+        digitalWrite(LED_BUILTIN, HIGH);
+        delay(50);
+    }
     digitalWrite(LED_BUILTIN, HIGH);
+    #endif
     
     Keyboard.begin(); // initialize control over the keyboard
     Mouse.begin();
     if(!touchInit())
         Serial.println(F("Touch init failed"));
-    
-    attachInterrupt(digitalPinToInterrupt(PIN_NN_DR), dataReadyISR, RISING);
 }
 
 void loop()
